@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>扫码签到验证</title>
+    <!-- 引入 Vue 3 和 Element Plus -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <script src="https://unpkg.com/element-plus"></script>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+            background-color: #f5f7fa; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            min-height: 100vh; 
+            margin: 0; 
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .card { 
+            width: 100%; 
+            max-width: 420px; 
+            padding: 40px 30px; 
+            text-align: center; 
+            border-radius: 16px; 
+        }
+        .code-display { 
+            font-size: 56px; 
+            font-weight: bold; 
+            color: #409EFF; 
+            letter-spacing: 12px; 
+            margin: 30px 0; 
+            font-family: 'Courier New', Courier, monospace; 
+            text-shadow: 2px 2px 4px rgba(64, 158, 255, 0.2); 
+            user-select: all; /* 允许长按选中复制 */
+        }
+        .tips { color: #606266; font-size: 15px; margin-bottom: 25px; line-height: 1.6; }
+        .loading-text { color: #909399; font-size: 14px; margin-top: 15px; }
+        .status-tag { 
+            font-size: 12px; 
+            color: #67C23A; 
+            background: #f0f9eb; 
+            padding: 6px 12px; 
+            border-radius: 20px; 
+            display: inline-block; 
+            margin-bottom: 15px;
+            border: 1px solid #e1f3d8;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <el-card class="card" shadow="always">
+            <!-- 1. 加载状态 -->
+            <div v-if="isLoading">
+                <el-icon :size="36" color="#409EFF" class="is-loading" style="margin-bottom: 15px;"><Loading /></el-icon>
+                <p class="loading-text">正在为您生成专属安全码...</p>
+            </div>
+
+            <!-- 2. 展示结果 -->
+            <div v-else>
+                <!-- 如果是老用户，显示提示标签 -->
+                <div v-if="isExistingCode" class="status-tag">
+                    <el-icon style="vertical-align: middle; margin-right: 4px;"><Check /></el-icon>
+                    已为您保留上次的签到码
+                </div>
+                
+                <h2 style="margin-top: 0; color: #303133; font-size: 22px;">安全验证</h2>
+                <p class="tips">请复制下方 6 位随机码<br>系统将自动为您跳转至目标页面</p>
+                
+                <!-- 随机码显示区 -->
+                <div class="code-display">{{ randomCode }}</div>
+                
+                <!-- 操作按钮 -->
+                <el-button 
+                    type="primary" 
+                    size="large" 
+                    style="width: 100%; height: 52px; font-size: 18px; border-radius: 10px; font-weight: bold;" 
+                    @click="copyAndJump" 
+                    :loading="isCopying"
+                >
+                    {{ isCopying ? '复制成功，跳转中...' : '一键复制并跳转' }}
+                </el-button>
+                
+                <p style="margin-top: 30px; font-size: 12px; color: #C0C4CC;">目标链接：{{ targetUrl }}</p>
+            </div>
+        </el-card>
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted } = Vue;
+        const { ElMessage } = ElementPlus;
+
+        const app = createApp({
+            setup() {
+                // ================= 配置区 =================
+                // 1. 修改这里为您最终要跳转的固定链接
+                const targetUrl = ref('https://www.baidu.com'); 
+                // 2. 本地存储的 Key（用于记住该设备用户）
+                const STORAGE_KEY = 'secure_scan_checkin_v1'; 
+                // ==========================================
+
+                const randomCode = ref('');
+                const isCopying = ref(false);
+                const isLoading = ref(true);
+                const isExistingCode = ref(false); 
+
+                // 【核心】使用浏览器底层硬件噪声生成“真随机数”
+                const generateTrueRandomCode = () => {
+                    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 去掉了易混淆的 I,1,O,0
+                    let result = '';
+                    // 创建一个包含 6 个位置的数组
+                    const randomArray = new Uint32Array(6);
+                    // 调用底层 API 用物理噪声填满数组
+                    window.crypto.getRandomValues(randomArray);
+                    // 提取字符
+                    for (let i = 0; i < 6; i++) {
+                        result += chars.charAt(randomArray[i] % chars.length);
+                    }
+                    return result;
+                };
+
+                // 页面加载时执行
+                onMounted(() => {
+                    setTimeout(() => {
+                        // 尝试从本地读取旧码
+                        const savedCode = localStorage.getItem(STORAGE_KEY);
+                        
+                        if (savedCode) {
+                            randomCode.value = savedCode;
+                            isExistingCode.value = true;
+                        } else {
+                            // 第一次来，生成真随机码并保存
+                            const newCode = generateTrueRandomCode();
+                            randomCode.value = newCode;
+                            localStorage.setItem(STORAGE_KEY, newCode);
+                            isExistingCode.value = false;
+                        }
+                        isLoading.value = false;
+                    }, 600); 
+                });
+
+                // 复制并跳转逻辑（包含降级兼容方案）
+                const copyAndJump = async () => {
+                    isCopying.value = true;
+                    try {
+                        // 优先使用现代标准 API
+                        await navigator.clipboard.writeText(randomCode.value);
+                        ElMessage.success('复制成功，正在跳转...');
+                        setTimeout(() => { window.location.href = targetUrl.value; }, 1200);
+                    } catch (err) {
+                        // 降级方案：兼容老旧浏览器或微信环境
+                        const textArea = document.createElement("textarea");
+                        textArea.value = randomCode.value;
+                        textArea.style.position = "fixed";
+                        textArea.style.left = "-9999px";
+                        document.body.appendChild(textArea);
+                        textArea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textArea);
+                        ElMessage.success('复制成功，正在跳转...');
+                        setTimeout(() => { window.location.href = targetUrl.value; }, 1200);
+                    }
+                };
+
+                return { randomCode, targetUrl, isCopying, isLoading, isExistingCode, copyAndJump };
+            }
+        });
+
+        app.use(ElementPlus);
+        app.mount('#app');
+    </script>
+</body>
+</html>
